@@ -17,6 +17,7 @@
 package org.cloudfoundry.reactor.util;
 
 
+import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.util.AsciiString;
 import org.cloudfoundry.reactor.ConnectionContext;
 import org.cloudfoundry.reactor.TokenProvider;
@@ -27,9 +28,6 @@ import reactor.ipc.netty.http.client.HttpClientRequest;
 import reactor.ipc.netty.http.client.HttpClientResponse;
 
 import java.util.function.Function;
-
-import static io.netty.handler.codec.http.HttpHeaderNames.AUTHORIZATION;
-import static org.cloudfoundry.util.tuple.TupleUtils.function;
 
 public abstract class AbstractReactorOperations {
 
@@ -93,6 +91,7 @@ public abstract class AbstractReactorOperations {
                     .flatMap(HttpClientRequest::send))
                 .doOnSubscribe(NetworkLogging.get(uri))
                 .transform(NetworkLogging.response(uri))
+                .transform(this::invalidateToken)
                 .transform(responseTransformer));
     }
 
@@ -196,14 +195,27 @@ public abstract class AbstractReactorOperations {
     }
 
     private Mono<HttpClientRequest> addAuthorization(Mono<HttpClientRequest> outbound) {
-        return Mono.when(outbound, this.tokenProvider.getToken(this.connectionContext))
-            .map(function((request, token) -> request.addHeader(AUTHORIZATION, String.format("bearer %s", token))));
+        return outbound;
+//        return Mono.when(outbound, this.tokenProvider.getToken(this.connectionContext))
+//            .map(function((request, token) -> request.addHeader(AUTHORIZATION, String.format("bearer %s", token))));
     }
 
     private <T> Function<Mono<HttpClientResponse>, Mono<T>> deserializedResponse(Class<T> responseType) {
         return inbound -> inbound
             .transform(JsonCodec.decode(this.connectionContext.getObjectMapper(), responseType))
             .doOnError(JsonParsingException.class, e -> NetworkLogging.RESPONSE_LOGGER.debug("{}\n{}", e.getCause().getMessage(), e.getPayload()));
+    }
+
+    private Mono<HttpClientResponse> invalidateToken(Mono<HttpClientResponse> inbound) {
+        return inbound
+            .then(response -> {
+                if (response.status() == HttpResponseStatus.UNAUTHORIZED) {
+                    return inbound
+                        .transform(this::invalidateToken);
+                } else {
+                    return Mono.just(response);
+                }
+            });
     }
 
     private Function<Mono<HttpClientRequest>, Publisher<Void>> serializedRequest(Object requestPayload) {

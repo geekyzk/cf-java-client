@@ -80,7 +80,8 @@ public abstract class AbstractUaaTokenProvider implements TokenProvider {
 
     @Override
     public final Mono<String> getToken(ConnectionContext connectionContext) {
-        return this.tokens.computeIfAbsent(connectionContext, this::getTokenFlow);
+        return Mono.just("WAKA WAKA");
+//        return this.tokens.computeIfAbsent(connectionContext, this::getTokenFlow);
     }
 
     /**
